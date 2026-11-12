@@ -32,6 +32,17 @@ void initFleet();
 // True in fleet builds, where the fleet server replaces the R&D cloud link.
 bool fleetOwnsCloudLink();
 
+// A remote asked this machine to update (go:update) while it is on its error
+// screen, where the menu's update flow cannot run. Checks the dashboard and
+// installs in the background, the same way a dashboard command does.
+void fleetStartUpdateFromRemote();
+
+// While that runs: the state to report to the remote in place of the real one
+// ("update.checking", "update.installing", then "update.idle" or
+// "update.failed" for a few seconds), so the remote's own update screens
+// follow it. nullptr when nothing is running.
+const char *fleetVirtualState();
+
 // Free the live link's memory while another job needs it, and restore it.
 void fleetPauseLink();
 void fleetResumeLink();

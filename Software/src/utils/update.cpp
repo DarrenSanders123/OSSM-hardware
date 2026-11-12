@@ -163,6 +163,7 @@ void runCheck() {
              decision.targetVersion.c_str(), decision.nextHopVersion.c_str(),
              decision.reason.c_str());
     if (!decision.shouldUpdate) {
+        networkStatus.noUpdate = true;
         stateMachine->process_event(UpdateUnavailable{});
         return;
     }

@@ -467,17 +467,51 @@ void updateFromError(const Command &command) {
     ossmStartUpdate();
     const bool settled = waitFor(CHECK_TIMEOUT_MS, [] {
         return !networkStatus.targetVersion.isEmpty() ||
-               !networkStatus.error.isEmpty();
+               !networkStatus.error.isEmpty() || networkStatus.noUpdate;
     });
     if (!settled || networkStatus.targetVersion.isEmpty()) {
         report(command, false,
-               settled ? updateFailure()
-                       : String("server offered no update for this machine"));
+               settled && !networkStatus.noUpdate
+                   ? updateFailure()
+                   : String("server offered no update for this machine"));
         return;
     }
     ossmStartInstall();
     waitFor(INSTALL_TIMEOUT_MS, [] { return !networkStatus.error.isEmpty(); });
     report(command, false, updateFailure());
+}
+
+// ---------------------------------------------------------------------------
+// An update asked for by a remote while the machine is on its error screen.
+// The remote follows the machine's state, so the phases are reported as the
+// update states its own screens already know.
+// ---------------------------------------------------------------------------
+enum RemoteUpdatePhase { PHASE_NONE, PHASE_CHECKING, PHASE_INSTALLING, PHASE_UP_TO_DATE, PHASE_FAILED };
+volatile RemoteUpdatePhase remoteUpdatePhase = PHASE_NONE;
+constexpr uint32_t REMOTE_RESULT_HOLD_MS = 20 * 1000;  // long enough for the remote to read it
+
+void remoteUpdateTask(void *) {
+    remoteUpdatePhase = PHASE_CHECKING;
+    networkStatus.clearError();
+    networkStatus.clearUpdate();
+    ossmStartUpdate();
+    waitFor(CHECK_TIMEOUT_MS, [] {
+        return !networkStatus.targetVersion.isEmpty() ||
+               !networkStatus.error.isEmpty() || networkStatus.noUpdate;
+    });
+    if (networkStatus.targetVersion.isEmpty()) {
+        remoteUpdatePhase = networkStatus.noUpdate ? PHASE_UP_TO_DATE : PHASE_FAILED;
+    } else {
+        remoteUpdatePhase = PHASE_INSTALLING;  // no second confirmation: it was asked for
+        ossmStartInstall();
+        waitFor(INSTALL_TIMEOUT_MS, [] { return !networkStatus.error.isEmpty(); });
+        remoteUpdatePhase = PHASE_FAILED;  // a successful install restarts instead
+    }
+    ESP_LOGW(TAG, "Update asked for by a remote ended: %s",
+             remoteUpdatePhase == PHASE_UP_TO_DATE ? "up to date" : updateFailure().c_str());
+    vTaskDelay(pdMS_TO_TICKS(REMOTE_RESULT_HOLD_MS));
+    remoteUpdatePhase = PHASE_NONE;
+    vTaskDelete(nullptr);
 }
 
 void execute(const Command &command) {
@@ -774,6 +808,27 @@ void initFleet() {
 
 bool fleetOwnsCloudLink() { return true; }
 
+void fleetStartUpdateFromRemote() {
+    if (remoteUpdatePhase != PHASE_NONE) return;  // already running
+    ESP_LOGW(TAG, "A remote asked this machine to update");
+    remoteUpdatePhase = PHASE_CHECKING;
+    if (xTaskCreatePinnedToCore(remoteUpdateTask, "fleetRemoteUpd", 5120, nullptr,
+                                1, nullptr, 0) != pdPASS) {
+        remoteUpdatePhase = PHASE_NONE;
+        ESP_LOGE(TAG, "Could not start the update asked for by a remote");
+    }
+}
+
+const char *fleetVirtualState() {
+    switch (remoteUpdatePhase) {
+        case PHASE_CHECKING: return "update.checking";
+        case PHASE_INSTALLING: return "update.installing";
+        case PHASE_UP_TO_DATE: return "update.idle";
+        case PHASE_FAILED: return "update.failed";
+        default: return nullptr;
+    }
+}
+
 // Called around every other job that needs the TLS memory (firmware update,
 // pairing, the HTTPS fallback) and around homing. Safe to call repeatedly.
 void fleetPauseLink() {
@@ -806,6 +861,8 @@ void fleetResumeLink() {
 void fleetEarlyInit() {}
 void initFleet() {}
 bool fleetOwnsCloudLink() { return false; }
+void fleetStartUpdateFromRemote() {}
+const char *fleetVirtualState() { return nullptr; }
 void fleetPauseLink() {}
 void fleetResumeLink() {}
 

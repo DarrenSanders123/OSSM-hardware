@@ -25,7 +25,13 @@ struct NetworkStatus {
         error = "";
         errorDetail = "";
     }
-    void clearUpdate() { targetVersion = ""; }
+    // Set when an update check finished and the server offered nothing.
+    bool noUpdate = false;
+
+    void clearUpdate() {
+        targetVersion = "";
+        noUpdate = false;
+    }
     void clearPairing() {
         pairingCode = "";
         isPaired = false;

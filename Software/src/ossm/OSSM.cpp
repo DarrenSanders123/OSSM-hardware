@@ -14,6 +14,7 @@
 #include "services/communication/mqtt.h"
 #include "services/communication/queue.h"
 #include "services/encoder.h"
+#include "services/fleet/fleet.h"
 #include "services/stepper.h"
 
 namespace sml = boost::sml;
@@ -80,12 +81,17 @@ void OSSM::ble_click(String commandString) {
     // start a mode are untouched, and the machine can still be restarted
     // with its own button (two presses) or from the fleet dashboard.
     if (currentState.startsWith("error")) {
-        // Update and pairing run from the menu, so from here they could only
-        // press through the help page, and the second press restarts.
+        // The menu's update flow cannot run from here, so a remote's request
+        // is run in the background instead (fleet builds; otherwise ignored).
+        if (command.command == Commands::goToUpdate) {
+            fleetStartUpdateFromRemote();
+            return;
+        }
+        // Pairing runs from the menu, so from here it could only press through
+        // the help page, and the second press restarts.
         if (command.command == Commands::goToStrokeEngine ||
             command.command == Commands::goToSimplePenetration ||
             command.command == Commands::goToStreaming ||
-            command.command == Commands::goToUpdate ||
             command.command == Commands::goToPairing) {
             ESP_LOGW("OSSM", "Ignored %s: machine is in %s",
                      commandString.c_str(), currentState.c_str());
@@ -231,6 +237,10 @@ String OSSM::getCurrentState() {
         stateMachine->visit_current_states(
             [&input](auto state) { input.state = state.c_str(); });
     }
+
+    // While an update asked for by a remote runs from the error screen, tell
+    // the remote its update states (no-op in builds without the fleet client).
+    if (const char *virtualState = fleetVirtualState()) input.state = virtualState;
 
     float positionMm = float(stepper->getCurrentPosition()) / float(1_mm);
     if (isnan(positionMm)) positionMm = 0.0f;
