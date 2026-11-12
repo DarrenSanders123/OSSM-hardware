@@ -68,6 +68,13 @@ constexpr uint32_t RTC_MAGIC = 0xF1EE7C0D;
 RTC_NOINIT_ATTR uint32_t rtcMagic;
 RTC_NOINIT_ATTR uint32_t crashStreak;
 
+// An update needs a large free block for TLS. A machine that has been running
+// a while has a fragmented heap and a download then runs out of memory, so an
+// update first restarts the machine and runs right after boot.
+constexpr uint32_t UPDATE_AFTER_RESTART = 0x0D1A7E01;
+constexpr uint32_t HEAP_FRESH_MS = 90 * 1000;
+RTC_NOINIT_ATTR uint32_t updateAfterRestartMagic;
+
 // Log lines waiting to be sent. Also in RTC memory, so the lines written
 // just before a crash are still there to send after the restart.
 constexpr size_t LOG_RING_BYTES = 4096;
@@ -465,6 +472,13 @@ void updateFromMenu(const Command &command) {
 void updateFromError(const Command &command) {
     networkStatus.clearError();
     networkStatus.clearUpdate();
+    if (millis() > HEAP_FRESH_MS) {
+        vTaskDelay(pdMS_TO_TICKS(2500));  // the remote reads "update.checking"
+        ESP_LOGW(TAG, "Restarting first: the update needs unfragmented memory");
+        updateAfterRestartMagic = UPDATE_AFTER_RESTART;
+        vTaskDelay(pdMS_TO_TICKS(300));
+        ESP.restart();
+    }
     // Let the remote read "update.checking", then free the Bluetooth
     // connection's memory: the TLS handshake does not fit beside it.
     vTaskDelay(pdMS_TO_TICKS(2500));
@@ -549,6 +563,12 @@ void execute(const Command &command) {
     } else if (command.type == "update") {
         if (!isIdle()) {
             report(command, false, "machine is in use; try again when idle");
+        } else if (millis() > HEAP_FRESH_MS) {
+            report(command, true, "restarting first; the update runs right after");
+            flushResults();
+            vTaskDelay(pdMS_TO_TICKS(500));
+            updateAfterRestartMagic = UPDATE_AFTER_RESTART;
+            ESP.restart();
         } else if (inMenu()) {
             updateFromMenu(command);
         } else {
@@ -669,6 +689,8 @@ void fleetTask(void *) {
         linkStart();
     }
 
+    bool bootUpdatePending = updateAfterRestartMagic == UPDATE_AFTER_RESTART;
+    updateAfterRestartMagic = 0;
     uint32_t lastStatus = 0;
     uint32_t lastLinkUp = millis();
     uint32_t lastPoll = 0;
@@ -677,6 +699,20 @@ void fleetTask(void *) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(200));
         const uint32_t now = millis();
+
+        if (bootUpdatePending) {
+            if (now > 180 * 1000) {
+                bootUpdatePending = false;
+            } else if (WiFi.status() == WL_CONNECTED && isIdle()) {
+                bootUpdatePending = false;
+                ESP_LOGW(TAG, "Running the update that asked for a restart");
+                if (inMenu()) {
+                    updateFromMenu(Command{});
+                } else {
+                    fleetStartUpdateFromRemote();
+                }
+            }
+        }
 
         // Running this long means the firmware is healthy.
         if (crashStreak != 0 && now > HEALTHY_AFTER_MS) crashStreak = 0;
