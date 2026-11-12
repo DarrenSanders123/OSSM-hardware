@@ -79,13 +79,26 @@ void OSSM::ble_click(String commandString) {
     // home, for example a bare board with no motor. Commands that do not
     // start a mode are untouched, and the machine can still be restarted
     // with its own button (two presses) or from the fleet dashboard.
-    if (currentState.startsWith("error") &&
-        (command.command == Commands::goToStrokeEngine ||
-         command.command == Commands::goToSimplePenetration ||
-         command.command == Commands::goToStreaming)) {
-        ESP_LOGW("OSSM", "Ignored %s: machine is in %s", commandString.c_str(),
-                 currentState.c_str());
-        return;
+    if (currentState.startsWith("error")) {
+        // Update and pairing run from the menu, so from here they could only
+        // press through the help page, and the second press restarts.
+        if (command.command == Commands::goToStrokeEngine ||
+            command.command == Commands::goToSimplePenetration ||
+            command.command == Commands::goToStreaming ||
+            command.command == Commands::goToUpdate ||
+            command.command == Commands::goToPairing) {
+            ESP_LOGW("OSSM", "Ignored %s: machine is in %s",
+                     commandString.c_str(), currentState.c_str());
+            return;
+        }
+        // A restart was asked for: do it, instead of needing two button
+        // presses that the remote never sends.
+        if (command.command == Commands::goToRestart) {
+            ESP_LOGW("OSSM", "Restarting on request from %s",
+                     currentState.c_str());
+            vTaskDelay(pdMS_TO_TICKS(300));
+            ESP.restart();
+        }
     }
 
     switch (command.command) {
