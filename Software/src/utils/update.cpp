@@ -18,6 +18,7 @@
 #include "ossm/state/network.h"
 #include "ossm/state/state.h"
 #include "services/communication/mqtt.h"
+#include "services/communication/nimble.h"
 #include "utils/tls_session.hpp"
 
 #ifndef FIRMWARE_BUILD_SHA
@@ -110,6 +111,7 @@ void failUpdate(const char *code, const String &detail) {
     ESP_LOGE(UPDATE_TAG, "Firmware update failed (%s): %s", code, detail.c_str());
     networkStatus.error = code;
     networkStatus.errorDetail = detail;
+    bleResumeAfterTls();  // a successful install restarts instead
     stateMachine->process_event(UpdateFailed{});
 }
 
@@ -164,6 +166,7 @@ void runCheck() {
              decision.reason.c_str());
     if (!decision.shouldUpdate) {
         networkStatus.noUpdate = true;
+        bleResumeAfterTls();
         stateMachine->process_event(UpdateUnavailable{});
         return;
     }
@@ -250,11 +253,13 @@ void runInstall() {
 }
 
 void updateTask(void *pvParameters) {
+    bleReleaseForTls();  // a connected BLE client leaves too little heap for TLS
     runCheck();  // TlsSession restores MQTT when this returns
     vTaskDelete(nullptr);
 }
 
 void installTask(void *pvParameters) {
+    bleReleaseForTls();
     runInstall();
     vTaskDelete(nullptr);
 }
