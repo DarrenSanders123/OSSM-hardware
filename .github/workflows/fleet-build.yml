@@ -120,6 +120,8 @@ jobs:
           curl --fail-with-body -sS \
             -H "Authorization: Bearer $FLEET_CI_TOKEN" -H "Accept: application/json" \
             -F "firmware=@.pio/build/fleet/firmware.bin" \
+            -F "bootloader=@.pio/build/fleet/bootloader.bin" \
+            -F "partitions=@.pio/build/fleet/partitions.bin" \
             -F "version=$version" \
             -F "build_sha=$(git rev-parse HEAD)" \
             -F "upstream_sha=${{ steps.merge.outputs.upstream_sha }}" \
