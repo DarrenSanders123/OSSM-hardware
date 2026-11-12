@@ -106,6 +106,10 @@ inline std::string sha256Hex(const unsigned char digest[32]) {
     return output;
 }
 
+// Called with (bytes written so far, total bytes) while an artifact downloads.
+// Null by default; the device sets it to log or show progress.
+inline void (*installProgressHook)(std::uint32_t, std::uint32_t) = nullptr;
+
 inline bool installStreamedArtifact(const Artifact &artifact, int updateCommand,
                                     String &error) {
     esp_http_client_config_t config = {};
@@ -155,6 +159,9 @@ inline bool installStreamedArtifact(const Artifact &artifact, int updateCommand,
                 }
                 mbedtls_sha256_update_ret(&sha, buffer, read);
                 total += read;
+                if (installProgressHook != nullptr) {
+                    installProgressHook(total, artifact.sizeBytes);
+                }
             }
             unsigned char digest[32] = {};
             mbedtls_sha256_finish_ret(&sha, digest);

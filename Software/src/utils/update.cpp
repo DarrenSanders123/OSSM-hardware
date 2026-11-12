@@ -8,6 +8,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 
 #include "FirmwareUpdateRuntime.h"
 #include "constants/LogTags.h"
@@ -32,6 +33,15 @@
 #define OSSM_UPDATE_SERVER FLEET_SERVER
 #else
 #define OSSM_UPDATE_SERVER RAD_SERVER
+#endif
+
+// A TLS handshake keeps a core busy for seconds. At the default priority it
+// starves the idle task, which trips the task watchdog; in fleet builds the
+// update tasks run at idle priority instead.
+#ifdef FLEET_SERVER
+#define OSSM_UPDATE_TASK_PRIORITY tskIDLE_PRIORITY
+#else
+#define OSSM_UPDATE_TASK_PRIORITY 1
 #endif
 
 namespace {
@@ -99,6 +109,7 @@ firmware::DeviceReport makeDeviceReport() {
 void failUpdate(const char *code, const String &detail) {
     ESP_LOGE(UPDATE_TAG, "Firmware update failed (%s): %s", code, detail.c_str());
     networkStatus.error = code;
+    networkStatus.errorDetail = detail;
     stateMachine->process_event(UpdateFailed{});
 }
 
@@ -183,11 +194,43 @@ void runInstall() {
         return;
     }
 
+    // Everything an update does is logged at warning level so it reaches the
+    // dashboard and is kept with the update.
+    for (std::size_t index = 0; index < offeredDecision.artifactCount; ++index) {
+        const auto &artifact = offeredDecision.artifacts[index];
+        ESP_LOGW(UPDATE_TAG, "Installing %s: %u bytes", artifact.role.c_str(),
+                 static_cast<unsigned>(artifact.sizeBytes));
+    }
+    ESP_LOGW(UPDATE_TAG, "Wi-Fi %d dBm, internal free=%u largest=%u",
+             WiFi.RSSI(),
+             static_cast<unsigned>(
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(
+                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    firmware::installProgressHook = [](std::uint32_t done, std::uint32_t total) {
+        static std::uint32_t lastTenth = 99;
+        const std::uint32_t tenth = total == 0 ? 0 : (done * 10ULL) / total;
+        if (done == 0 || tenth != lastTenth) {
+            lastTenth = tenth;
+            ESP_LOGW(UPDATE_TAG, "Download %u%%: %u of %u bytes",
+                     static_cast<unsigned>(tenth * 10),
+                     static_cast<unsigned>(done), static_cast<unsigned>(total));
+        }
+    };
+    const int64_t installStarted = esp_timer_get_time();
+
     String error;
     if (!firmware::installApplicationAndFilesystem(offeredDecision, error)) {
+        ESP_LOGE(UPDATE_TAG, "Install stopped after %lld ms: %s",
+                 static_cast<long long>((esp_timer_get_time() - installStarted) /
+                                        1000),
+                 error.c_str());
         failUpdate("install-failed", error);
         return;
     }
+    ESP_LOGW(UPDATE_TAG, "Install finished in %lld ms",
+             static_cast<long long>((esp_timer_get_time() - installStarted) /
+                                    1000));
 
     ESP_LOGW(UPDATE_TAG, "Verified firmware installed; restarting");
     esp_restart();
@@ -230,7 +273,7 @@ void ossmConfirmRunningImage() {
 void ossmStartUpdate() {
     pauseMqttForTls();
     if (xTaskCreatePinnedToCore(updateTask, "updateTask",
-                                20 * configMINIMAL_STACK_SIZE, nullptr, 1,
+                                20 * configMINIMAL_STACK_SIZE, nullptr, OSSM_UPDATE_TASK_PRIORITY,
                                 nullptr, 0) != pdPASS) {
         resumeMqttAfterTls();
         failUpdate("low-memory", "could not create update task");
@@ -240,7 +283,7 @@ void ossmStartUpdate() {
 void ossmStartInstall() {
     pauseMqttForTls();
     if (xTaskCreatePinnedToCore(installTask, "installTask",
-                                20 * configMINIMAL_STACK_SIZE, nullptr, 1,
+                                20 * configMINIMAL_STACK_SIZE, nullptr, OSSM_UPDATE_TASK_PRIORITY,
                                 nullptr, 0) != pdPASS) {
         resumeMqttAfterTls();
         failUpdate("low-memory", "could not create install task");

@@ -69,8 +69,10 @@ RTC_NOINIT_ATTR uint32_t crashStreak;
 
 // Log lines waiting to be sent. Also in RTC memory, so the lines written
 // just before a crash are still there to send after the restart.
-RTC_NOINIT_ATTR char logRing[2048];
-RTC_NOINIT_ATTR uint32_t logLen;
+constexpr size_t LOG_RING_BYTES = 4096;
+RTC_NOINIT_ATTR char logRing[LOG_RING_BYTES];
+RTC_NOINIT_ATTR uint32_t logHead;  // next byte to write
+RTC_NOINIT_ATTR uint32_t logLen;   // bytes in the ring
 portMUX_TYPE logMux = portMUX_INITIALIZER_UNLOCKED;
 
 esp_reset_reason_t resetReason = ESP_RST_UNKNOWN;
@@ -97,9 +99,11 @@ void evaluateLastReset() {
         resetReason == ESP_RST_PANIC || resetReason == ESP_RST_INT_WDT ||
         resetReason == ESP_RST_TASK_WDT || resetReason == ESP_RST_WDT ||
         resetReason == ESP_RST_BROWNOUT;
-    if (rtcMagic != RTC_MAGIC || logLen > sizeof(logRing)) {
+    if (rtcMagic != RTC_MAGIC || logLen > LOG_RING_BYTES ||
+        logHead >= LOG_RING_BYTES) {
         rtcMagic = RTC_MAGIC;
         crashStreak = 0;
+        logHead = 0;
         logLen = 0;
     }
     crashStreak = crashed ? crashStreak + 1 : 0;
@@ -115,9 +119,11 @@ void IRAM_ATTR logPush(const char *data, size_t length) {
     for (size_t index = 0; index < length; index++) {
         const char character = data[index];
         if (character == '\r') continue;
-        // When full, the newest text is dropped: what led up to a problem is
-        // worth more than what followed it.
-        if (logLen < sizeof(logRing)) logRing[logLen++] = character;
+        // When full the oldest text is overwritten: the end of an update, or
+        // what happened just before a crash, is what is worth reading.
+        logRing[logHead] = character;
+        logHead = (logHead + 1) % LOG_RING_BYTES;
+        if (logLen < LOG_RING_BYTES) logLen++;
     }
     portEXIT_CRITICAL_SAFE(&logMux);
 }
@@ -142,17 +148,23 @@ int captureVprintf(const char *format, va_list arguments) {
     return vprintf(format, arguments);
 }
 
-// Takes whole lines out of the ring, up to `capacity` bytes.
+// Takes whole lines out of the ring, oldest first, up to `capacity` bytes.
 size_t logDrain(char *out, size_t capacity) {
+    size_t take = 0;
     portENTER_CRITICAL(&logMux);
-    size_t take = min(static_cast<size_t>(logLen), capacity);
-    while (take > 0 && logRing[take - 1] != '\n') take--;
-    if (take == 0 && logLen >= capacity) take = capacity;  // one very long line
-    if (take > 0) {
-        memcpy(out, logRing, take);
-        memmove(logRing, logRing + take, logLen - take);
-        logLen -= take;
+    const size_t start = (logHead + LOG_RING_BYTES - logLen) % LOG_RING_BYTES;
+    take = min(static_cast<size_t>(logLen), capacity);
+    // Cut back to the last complete line.
+    size_t complete = take;
+    while (complete > 0 && logRing[(start + complete - 1) % LOG_RING_BYTES] != '\n') {
+        complete--;
     }
+    if (complete == 0 && logLen >= capacity) complete = take;  // one very long line
+    take = complete;
+    for (size_t index = 0; index < take; index++) {
+        out[index] = logRing[(start + index) % LOG_RING_BYTES];
+    }
+    logLen -= take;
     portEXIT_CRITICAL(&logMux);
     return take;
 }
@@ -361,6 +373,13 @@ std::vector<Command> polled;
 uint32_t pollIntervalMs = FALLBACK_POLL_MS;
 volatile bool workerDone = false;
 
+// "code: what went wrong", for the dashboard.
+String updateFailure() {
+    return networkStatus.errorDetail.isEmpty()
+               ? networkStatus.error
+               : networkStatus.error + ": " + networkStatus.errorDetail;
+}
+
 void report(const Command &command, bool ok, const String &detail = "") {
     if (command.id == 0) return;
     if (!ok) {
@@ -428,11 +447,11 @@ void updateFromMenu(const Command &command) {
         // wait means it failed or timed out.
         waitFor(INSTALL_TIMEOUT_MS,
                 [] { return !stateMachine->is("update.installing"_s); });
-        report(command, false, "install-failed: " + networkStatus.error);
+        report(command, false, updateFailure());
     } else if (stateMachine->is("update.idle"_s)) {
         report(command, false, "server offered no update for this machine");
     } else if (stateMachine->is("update.failed"_s)) {
-        report(command, false, "check-failed: " + networkStatus.error);
+        report(command, false, updateFailure());
     } else {
         report(command, false, "update did not start");
     }
@@ -452,13 +471,13 @@ void updateFromError(const Command &command) {
     });
     if (!settled || networkStatus.targetVersion.isEmpty()) {
         report(command, false,
-               settled ? "check-failed: " + networkStatus.error
+               settled ? updateFailure()
                        : String("server offered no update for this machine"));
         return;
     }
     ossmStartInstall();
     waitFor(INSTALL_TIMEOUT_MS, [] { return !networkStatus.error.isEmpty(); });
-    report(command, false, "install-failed: " + networkStatus.error);
+    report(command, false, updateFailure());
 }
 
 void execute(const Command &command) {

@@ -17,7 +17,14 @@ struct NetworkStatus {
     // Version the resolver offered; set while waiting in update.available.
     String targetVersion;
 
-    void clearError() { error = ""; }
+    // What went wrong, in words, for the log and the dashboard ("artifact
+    // returned HTTP 404"). `error` stays the short code shown on screen.
+    String errorDetail;
+
+    void clearError() {
+        error = "";
+        errorDetail = "";
+    }
     void clearUpdate() { targetVersion = ""; }
     void clearPairing() {
         pairingCode = "";
