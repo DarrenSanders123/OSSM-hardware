@@ -127,6 +127,14 @@ inline bool isArtifactRole(const std::string &role) {
 
 inline bool isHttpsArtifactUrl(const std::string &url,
                                const std::string &expectedBucket) {
+#ifdef FLEET_ARTIFACT_PREFIX
+    // Fleet builds download from the builder's own server instead.
+    if (url.rfind(FLEET_ARTIFACT_PREFIX, 0) == 0 &&
+        url.find('?') == std::string::npos &&
+        url.find('#') == std::string::npos) {
+        return true;
+    }
+#endif
     const std::string prefix = "https://";
     const std::string hostSuffix = ".supabase.co";
     const std::string storagePath =

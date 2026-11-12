@@ -27,6 +27,13 @@
 #define FIRMWARE_TRACK "main"
 #endif
 
+// Fleet builds take their updates from the builder's own server.
+#ifdef FLEET_SERVER
+#define OSSM_UPDATE_SERVER FLEET_SERVER
+#else
+#define OSSM_UPDATE_SERVER RAD_SERVER
+#endif
+
 namespace {
 
 std::uint32_t physicalFlashSizeBytes() {
@@ -131,7 +138,7 @@ void runCheck() {
     firmware::Decision decision;
     String error;
     const firmware::DeviceReport report = makeDeviceReport();
-    if (!firmware::postCheck(RAD_SERVER, report, decision, error)) {
+    if (!firmware::postCheck(OSSM_UPDATE_SERVER, report, decision, error)) {
         failUpdate("check-failed", error);
         return;
     }

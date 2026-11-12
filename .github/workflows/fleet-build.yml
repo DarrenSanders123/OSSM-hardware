@@ -1,0 +1,137 @@
+# Keeps the fleet firmware current with upstream and publishes each build to
+# your fleet server, where it lands in the "test" channel.
+#
+# Runs when upstream may have changed (daily), when you push your own changes
+# to the `fleet` branch, or when started by hand. If upstream no longer merges
+# cleanly, or the build or tests fail, nothing is published and an issue is
+# opened in this fork instead.
+#
+# Repository settings needed (Settings -> Secrets and variables -> Actions):
+#   variable FLEET_SERVER    https://your-fleet-server
+#   secret   FLEET_KEY       FLEET_DEVICE_KEY from the server's .env
+#   secret   FLEET_CI_TOKEN  FLEET_CI_TOKEN from the server's .env
+name: Fleet firmware
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  push:
+    branches: [fleet]
+    paths: ["Software/**", ".github/workflows/fleet-build.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: fleet-firmware
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  UPSTREAM: https://github.com/KinkyMakers/OSSM-hardware.git
+  UPSTREAM_BRANCH: main
+
+jobs:
+  build:
+    # Only in a fork that has been set up for it; never in upstream itself.
+    if: vars.FLEET_SERVER != ''
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fleet
+          fetch-depth: 0
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git config user.name "fleet-bot"
+          git config user.email "fleet-bot@users.noreply.github.com"
+          before=$(git rev-parse HEAD)
+          git fetch --no-tags "$UPSTREAM" "$UPSTREAM_BRANCH"
+          echo "upstream_sha=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+          if ! git merge --no-edit FETCH_HEAD; then
+            files=$(git diff --name-only --diff-filter=U | sed 's/^/- /')
+            git merge --abort
+            gh issue create \
+              --title "Fleet firmware: upstream no longer merges cleanly" \
+              --body "Upstream $(git rev-parse --short FETCH_HEAD) conflicts with the fleet branch in:
+
+          $files
+
+          Nothing was published. Merge upstream into \`fleet\` by hand, resolve these files and push." || true
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" = "$before" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A scheduled run with nothing new from upstream stops here.
+      - name: Decide whether to build
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ steps.merge.outputs.changed }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.build == 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        if: steps.gate.outputs.build == 'true'
+        run: pip install platformio
+
+      - name: Unit tests
+        if: steps.gate.outputs.build == 'true'
+        working-directory: Software
+        run: pio test -e test
+
+      - name: Build fleet firmware
+        if: steps.gate.outputs.build == 'true'
+        working-directory: Software
+        env:
+          FLEET_SERVER: ${{ vars.FLEET_SERVER }}
+          FLEET_KEY: ${{ secrets.FLEET_KEY }}
+        run: |
+          export RELEASE_BUILD_SHA=$(git rev-parse HEAD)
+          pio run -e fleet
+
+      - name: Push merged branch
+        if: steps.gate.outputs.build == 'true' && steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:fleet
+
+      - name: Publish to fleet server
+        if: steps.gate.outputs.build == 'true'
+        working-directory: Software
+        env:
+          FLEET_SERVER: ${{ vars.FLEET_SERVER }}
+          FLEET_CI_TOKEN: ${{ secrets.FLEET_CI_TOKEN }}
+        run: |
+          version=$(sed -n 's/^#define VERSION "\(.*\)"/\1/p' src/constants/Version.h)
+          curl --fail-with-body -sS \
+            -H "Authorization: Bearer $FLEET_CI_TOKEN" -H "Accept: application/json" \
+            -F "firmware=@.pio/build/fleet/firmware.bin" \
+            -F "version=$version" \
+            -F "build_sha=$(git rev-parse HEAD)" \
+            -F "upstream_sha=${{ steps.merge.outputs.upstream_sha }}" \
+            -F "channel=test" \
+            -F "notes=$(git log -1 --format=%s)" \
+            "$FLEET_SERVER/api/fleet/v1/releases"
+
+      - name: Report a failed build
+        if: failure() && steps.merge.outcome == 'success'
+        run: |
+          gh issue create \
+            --title "Fleet firmware: build failed after upstream ${{ steps.merge.outputs.upstream_sha }}" \
+            --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Nothing was published; machines keep their current firmware." || true

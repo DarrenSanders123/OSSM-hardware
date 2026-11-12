@@ -11,6 +11,7 @@
 #include "services/communication/nimble.h"
 #include "services/display.h"
 #include "services/encoder.h"
+#include "services/fleet/fleet.h"
 #include "services/led.h"
 #include "services/stepper.h"
 #include "services/wm.h"
@@ -115,6 +116,7 @@ void __attribute__((weak)) setup() {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
             initMQTT();
+            initFleet();  // no-op unless built as the fleet environment
             pages::startPairingStatusCheck();
             vTaskDelete(nullptr);
         },
