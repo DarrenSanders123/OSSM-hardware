@@ -95,6 +95,11 @@ static void startHomingTask(void *pvParameters) {
     ESP_LOGD("Homing", "Target position in steps: %d", targetPositionInSteps);
     stepper->moveTo(targetPositionInSteps, false);
 
+    // Stall detection is the only thing that ends a homing pass, so keep
+    // enough of a trace to tell "sensor never moved" from "limit too high".
+    float peakCurrent = 0;
+    uint32_t lastCurrentLogMs = 0;
+
     // run loop for 15second or until loop exits
     while (isInHomingState()) {
         TickType_t xCurrentTickCount = xTaskGetTickCount();
@@ -107,6 +112,14 @@ static void startHomingTask(void *pvParameters) {
 
         if (homing_logic::isHomingTimedOut(msPassed, 40000)) {
             ESP_LOGE("Homing", "Homing took too long. Check power and restart");
+            ESP_LOGE("Homing",
+                     "No stall detected: peak current %.2f%% above idle, "
+                     "limit %.2f%% (idle offset %.2f%%)",
+                     peakCurrent, Config::Driver::sensorlessCurrentLimit,
+                     calibration.currentSensorOffset);
+            // Never leave the motor driving into the end stop.
+            stepper->forceStop();
+            stepper->disableOutputs();
             errorState.message = ui::strings::homingTookTooLong;
 
             // Clear homing active flag for LED indication
@@ -122,6 +135,32 @@ static void startHomingTask(void *pvParameters) {
                         calibration.currentSensorOffset;
 
         ESP_LOGV("Homing", "Current: %f", current);
+        if (current > peakCurrent) peakCurrent = current;
+        if (msPassed - lastCurrentLogMs >= 1000) {
+            lastCurrentLogMs = msPassed;
+            ESP_LOGI("Homing",
+                     "Current %.2f%% above idle (peak %.2f%%, limit %.2f%%)",
+                     current, peakCurrent,
+                     Config::Driver::sensorlessCurrentLimit);
+        }
+
+        // The move ran its full length without the current ever rising:
+        // the carriage is either stalled against the end stop or the motor
+        // is not being driven. Release the motor and report it now rather
+        // than holding torque against the stop until the 40 s timeout.
+        if (!stepper->isRunning()) {
+            ESP_LOGE("Homing",
+                     "Travel finished without a stall: peak current %.2f%% "
+                     "above idle, limit %.2f%% (idle offset %.2f%%)",
+                     peakCurrent, Config::Driver::sensorlessCurrentLimit,
+                     calibration.currentSensorOffset);
+            errorState.message = ui::strings::homingTookTooLong;
+            stepper->forceStop();
+            stepper->disableOutputs();
+            setHomingActive(false);
+            stateMachine->process_event(Error{});
+            break;
+        }
         bool isCurrentOverLimit = homing_logic::isCurrentOverLimit(
             current, 0, Config::Driver::sensorlessCurrentLimit);
 

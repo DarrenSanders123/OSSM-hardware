@@ -191,7 +191,9 @@ radble::Result settingValue(const String& path) {
     else if (path == "device.name") {
         Preferences preferences;
         preferences.begin("UserConfig", true);
-        document["value"] = preferences.getString("DeviceName", "OSSM");
+        document["value"] = preferences.isKey("DeviceName")
+                                ? preferences.getString("DeviceName", "OSSM")
+                                : String("OSSM");
         preferences.end();
     } else if (path == "device.firmwareProvenance") {
         const auto snapshot = firmware::provenance::runningSnapshot(

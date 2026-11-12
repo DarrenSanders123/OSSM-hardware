@@ -49,8 +49,11 @@ bool connectWiFi() {
         return false;
     }
 
-    String ssid = wifiPrefs.getString("ssid", "");
-    String password = wifiPrefs.getString("password", "");
+    String ssid =
+        wifiPrefs.isKey("ssid") ? wifiPrefs.getString("ssid", "") : String("");
+    String password = wifiPrefs.isKey("password")
+                          ? wifiPrefs.getString("password", "")
+                          : String("");
     wifiPrefs.end();
 
     if (ssid.length() == 0) {
@@ -99,7 +102,9 @@ String getWiFiStatus() {
     } else {
         // Try to read saved SSID from NVS
         if (wifiPrefs.begin("wifi", true)) {
-            String savedSSID = wifiPrefs.getString("ssid", "");
+            String savedSSID = wifiPrefs.isKey("ssid")
+                                   ? wifiPrefs.getString("ssid", "")
+                                   : String("");
             if (savedSSID.length() > 0) {
                 doc["ssid"] = savedSSID;
             }

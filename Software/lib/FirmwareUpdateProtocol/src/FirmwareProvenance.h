@@ -226,7 +226,9 @@ inline bool verifyToken(const std::string &token, const DeviceReport &expected,
 inline std::string readStored(const char *key) {
     Preferences preferences;
     if (!preferences.begin("fw-prov", true)) return {};
-    const String value = preferences.getString(key, "");
+    // getString() logs an error for a missing key, and this is polled.
+    const String value =
+        preferences.isKey(key) ? preferences.getString(key, "") : String("");
     preferences.end();
     return value.c_str();
 }

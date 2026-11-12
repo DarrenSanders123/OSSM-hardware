@@ -34,7 +34,11 @@ namespace Config {
         constexpr float stepsPerMM = motorStepPerRevolution / (pulleyToothCount * beltPitchMm);
         // This is the measured current that use to infer when the device has
         // reached the end of its stroke. during "Homing".
-        constexpr float sensorlessCurrentLimit = 6.0f;
+        // Percent of ADC full scale above the idle reading. 6.0 (upstream
+        // since c594858) is never reached on machines whose stall only adds
+        // ~4%, which leaves the motor grinding against the end stop; the
+        // original value was 1.5.
+        constexpr float sensorlessCurrentLimit = 3.0f;
 
         namespace Operator {
             // Define user-defined literal for unsigned integer values

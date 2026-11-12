@@ -9,7 +9,9 @@
 std::string getDeviceName() {
     Preferences userConfig;
     userConfig.begin("UserConfig", true);
-    String legacyName = userConfig.getString("DeviceName", "OSSM");
+    String legacyName = userConfig.isKey("DeviceName")
+                            ? userConfig.getString("DeviceName", "OSSM")
+                            : String("OSSM");
     userConfig.end();
     return radble::loadDeviceName(legacyName.c_str()).c_str();
 }
