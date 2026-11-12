@@ -212,19 +212,31 @@ void runInstall() {
         const std::uint32_t tenth = total == 0 ? 0 : (done * 10ULL) / total;
         if (done == 0 || tenth != lastTenth) {
             lastTenth = tenth;
-            ESP_LOGW(UPDATE_TAG, "Download %u%%: %u of %u bytes",
+            ESP_LOGW(UPDATE_TAG,
+                     "Download %u%%: %u of %u bytes, free=%u lowest=%u, %d dBm",
                      static_cast<unsigned>(tenth * 10),
-                     static_cast<unsigned>(done), static_cast<unsigned>(total));
+                     static_cast<unsigned>(done), static_cast<unsigned>(total),
+                     static_cast<unsigned>(heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     static_cast<unsigned>(heap_caps_get_minimum_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     WiFi.RSSI());
         }
     };
     const int64_t installStarted = esp_timer_get_time();
 
     String error;
     if (!firmware::installApplicationAndFilesystem(offeredDecision, error)) {
-        ESP_LOGE(UPDATE_TAG, "Install stopped after %lld ms: %s",
+        ESP_LOGE(UPDATE_TAG,
+                 "Install stopped after %lld ms: %s (free=%u lowest=%u, Wi-Fi %s)",
                  static_cast<long long>((esp_timer_get_time() - installStarted) /
                                         1000),
-                 error.c_str());
+                 error.c_str(),
+                 static_cast<unsigned>(
+                     heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_minimum_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 WiFi.status() == WL_CONNECTED ? "connected" : "DISCONNECTED");
         failUpdate("install-failed", error);
         return;
     }
