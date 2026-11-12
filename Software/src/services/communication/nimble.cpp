@@ -35,18 +35,24 @@ static const unsigned long RAMP_DURATION_MS =
 
 // Frees the memory a connected client holds so a TLS job can run. The client
 // reconnects once advertising is back (bleResumeAfterTls).
+static volatile bool bleHeldForTls = false;
 void restartAdvertisingWithCurrentName();
 void bleReleaseForTls() {
     if (pServer == nullptr) return;
+    bleHeldForTls = true;  // the disconnect callback must not advertise again
     NimBLEDevice::getAdvertising()->stop();
     for (uint16_t handle : pServer->getPeerDevices()) {
         pServer->disconnect(handle);
     }
-    vTaskDelay(pdMS_TO_TICKS(500));
+    for (int i = 0; i < 30 && pServer->getConnectedCount() > 0; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    vTaskDelay(pdMS_TO_TICKS(300));
 }
 
 void bleResumeAfterTls() {
     if (pServer == nullptr) return;
+    bleHeldForTls = false;
     restartAdvertisingWithCurrentName();
 }
 
@@ -136,7 +142,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
         ESP_LOGI(NIMBLE_TAG, "Speed on disconnect: %d", speedOnLostConnection);
 
         // Restart advertising when client disconnects
-        if (pServer->getConnectedCount() == 0) {
+        if (pServer->getConnectedCount() == 0 && !bleHeldForTls) {
             ESP_LOGI(NIMBLE_TAG,
                      "No connections remaining, restarting advertising");
             restartAdvertisingWithCurrentName();
