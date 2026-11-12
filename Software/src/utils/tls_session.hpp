@@ -6,6 +6,7 @@
 #include <esp_log.h>
 
 #include "services/communication/mqtt.h"
+#include "services/fleet/fleet.h"
 
 // Largest contiguous internal-RAM block a TLS handshake needs on this board.
 // Measured 2026-09-08 with MQTT paused: free 83,772 B, largest 29,696 B, and
@@ -35,6 +36,7 @@ inline bool &mqttPausedForTls() {
 }
 
 inline void pauseMqttForTls() {
+    fleetPauseLink();  // no-op unless built as the fleet environment
     if (!mqttPausedForTls() && mqttClient != nullptr) {
         esp_mqtt_client_stop(mqttClient);
         mqttPausedForTls() = true;
@@ -53,6 +55,7 @@ inline void resumeMqttAfterTls() {
                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     }
     mqttPausedForTls() = false;
+    fleetResumeLink();
 }
 
 class TlsSession {

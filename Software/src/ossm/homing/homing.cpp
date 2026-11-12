@@ -10,6 +10,7 @@
 #include "ossm/state/error.h"
 #include "ossm/state/state.h"
 #include "services/communication/mqtt.h"
+#include "services/fleet/fleet.h"
 #include "services/led.h"
 #include "services/stepper.h"
 #include "services/tasks.h"
@@ -36,12 +37,14 @@ bool isInHomingState() {
 }
 
 void pauseMqttForHoming() {
+    fleetPauseLink();  // no-op unless built as the fleet environment
     if (mqttPausedForHoming || mqttClient == nullptr) return;
     esp_mqtt_client_stop(mqttClient);
     mqttPausedForHoming = true;
 }
 
 void resumeMqttAfterHoming() {
+    fleetResumeLink();
     if (!mqttPausedForHoming) return;
     mqttPausedForHoming = false;
     if (mqttClient != nullptr) esp_mqtt_client_start(mqttClient);

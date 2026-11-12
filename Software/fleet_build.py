@@ -35,5 +35,7 @@ env.Append(
         ("FLEET_SERVER", env.StringifyMacro(server)),
         ("FLEET_KEY", env.StringifyMacro(key)),
         ("FLEET_ARTIFACT_PREFIX", env.StringifyMacro(server + "/firmware/releases/")),
+        # The live link: a WebSocket on the same host.
+        ("FLEET_LINK_URL", env.StringifyMacro("wss://" + server[len("https://"):] + "/link")),
     ]
 )

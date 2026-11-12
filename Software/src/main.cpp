@@ -52,6 +52,7 @@ void __attribute__((weak)) setup() {
 
     /** Board setup */
     initBoard();
+    fleetEarlyInit();  // no-op unless built as the fleet environment
 
     ESP_LOGD("MAIN", "Starting OSSM");
 
@@ -115,9 +116,11 @@ void __attribute__((weak)) setup() {
                 if (!bootHomingPending) break;
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
-            initMQTT();
             initFleet();  // no-op unless built as the fleet environment
-            pages::startPairingStatusCheck();
+            if (!fleetOwnsCloudLink()) {
+                initMQTT();
+                pages::startPairingStatusCheck();
+            }
             vTaskDelete(nullptr);
         },
         "initNimbleTask", 32 * configMINIMAL_STACK_SIZE, nullptr,
