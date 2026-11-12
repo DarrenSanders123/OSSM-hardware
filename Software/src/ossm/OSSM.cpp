@@ -72,6 +72,22 @@ void OSSM::ble_click(String commandString) {
             [&currentState](auto state) { currentState = state.c_str(); });
     }
 
+    // A machine that could not home sits on its error screen, where any
+    // button press advances the help page and the second one restarts it.
+    // A remote starts a mode (twice, on purpose) as soon as it connects, so
+    // without this guard connecting a remote restarts a machine that cannot
+    // home, for example a bare board with no motor. Commands that do not
+    // start a mode are untouched, and the machine can still be restarted
+    // with its own button (two presses) or from the fleet dashboard.
+    if (currentState.startsWith("error") &&
+        (command.command == Commands::goToStrokeEngine ||
+         command.command == Commands::goToSimplePenetration ||
+         command.command == Commands::goToStreaming)) {
+        ESP_LOGW("OSSM", "Ignored %s: machine is in %s", commandString.c_str(),
+                 currentState.c_str());
+        return;
+    }
+
     switch (command.command) {
         case Commands::goToStrokeEngine:
             menuState.currentOption = Menu::StrokeEngine;

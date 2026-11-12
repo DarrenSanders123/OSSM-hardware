@@ -196,6 +196,11 @@ String stateName() {
     return name;
 }
 
+int bleCentralCount() {
+    NimBLEServer *bleServer = NimBLEDevice::getServer();
+    return bleServer != nullptr ? bleServer->getConnectedCount() : 0;
+}
+
 bool inMenu() { return stateMachine->is("menu.idle"_s); }
 bool inError() {
     return stateMachine->is("error.idle"_s) || stateMachine->is("error.help"_s);
@@ -241,9 +246,7 @@ void buildStatus(JsonDocument &status) {
         calibration.currentSensorOffset;
     if (inError()) status["error"] = errorState.message;
 
-    NimBLEServer *bleServer = NimBLEDevice::getServer();
-    status["bleCentrals"] =
-        bleServer != nullptr ? bleServer->getConnectedCount() : 0;
+    status["bleCentrals"] = bleCentralCount();
 
     // Speed, stroke, depth, sensation, pattern as the remote sees them.
     if (ossm != nullptr) {
@@ -571,9 +574,12 @@ void pollTask(void *) {
 void runPoll() {
     workerDone = false;
     pauseMqttForTls();
+    // Priority 0 (the idle priority): the TLS handshake keeps a core busy for
+    // seconds, and at a higher priority it starves the idle task, which then
+    // trips the task watchdog.
     if (xTaskCreatePinnedToCore(pollTask, "fleetPoll",
-                                20 * configMINIMAL_STACK_SIZE, nullptr, 1,
-                                nullptr, 0) != pdPASS) {
+                                20 * configMINIMAL_STACK_SIZE, nullptr,
+                                tskIDLE_PRIORITY, nullptr, 0) != pdPASS) {
         resumeMqttAfterTls();
         return;
     }
@@ -636,8 +642,10 @@ void fleetTask(void *) {
 
         const bool fallback = safeMode || now - lastLinkUp > FALLBACK_AFTER_MS;
         const bool due = !polledOnce || now - lastPoll >= pollIntervalMs;
+        // The HTTPS check needs a large block of memory that a connected remote
+        // leaves too little of, so it only runs when no remote is connected.
         if (fallback && due && !linkPaused && WiFi.status() == WL_CONNECTED &&
-            isIdle()) {
+            isIdle() && bleCentralCount() == 0) {
             polledOnce = true;
             lastPoll = now;
             runPoll();
