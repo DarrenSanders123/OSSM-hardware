@@ -33,6 +33,23 @@ static int speedOnLostConnection = 0;
 static const unsigned long RAMP_DURATION_MS =
     2000;  // Duration for speed ramp to zero
 
+// Frees the memory a connected client holds so a TLS job can run. The client
+// reconnects once advertising is back (bleResumeAfterTls).
+void restartAdvertisingWithCurrentName();
+void bleReleaseForTls() {
+    if (pServer == nullptr) return;
+    NimBLEDevice::getAdvertising()->stop();
+    for (uint16_t handle : pServer->getPeerDevices()) {
+        pServer->disconnect(handle);
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+}
+
+void bleResumeAfterTls() {
+    if (pServer == nullptr) return;
+    restartAdvertisingWithCurrentName();
+}
+
 void restartAdvertisingWithCurrentName() {
     const std::string deviceName = getDeviceName();
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();

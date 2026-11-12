@@ -199,6 +199,7 @@ String OSSM::getStateFingerprint() {
     output += String(static_cast<int>(settings.pattern)) + ":";
     output += networkStatus.error + ":" + networkStatus.pairingCode + ":" +
               String(networkStatus.isPaired ? 1 : 0) + ":" + networkStatus.targetVersion + ":";
+    if (const char *virtualState = fleetVirtualState()) output += virtualState;
     output += sessionId;
     return output;
 }

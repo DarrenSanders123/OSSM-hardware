@@ -30,6 +30,7 @@
 #include "ossm/state/menu.h"
 #include "ossm/state/network.h"
 #include "ossm/state/state.h"
+#include "services/communication/nimble.h"
 #include "services/wm.h"
 #include "utils/https_client.hpp"
 #include "utils/tls_session.hpp"
@@ -464,6 +465,10 @@ void updateFromMenu(const Command &command) {
 void updateFromError(const Command &command) {
     networkStatus.clearError();
     networkStatus.clearUpdate();
+    // Let the remote read "update.checking", then free the Bluetooth
+    // connection's memory: the TLS handshake does not fit beside it.
+    vTaskDelay(pdMS_TO_TICKS(2500));
+    bleReleaseForTls();
     ossmStartUpdate();
     const bool settled = waitFor(CHECK_TIMEOUT_MS, [] {
         return !networkStatus.targetVersion.isEmpty() ||
@@ -494,6 +499,11 @@ void remoteUpdateTask(void *) {
     remoteUpdatePhase = PHASE_CHECKING;
     networkStatus.clearError();
     networkStatus.clearUpdate();
+    // Let the remote read "update.checking", then free the Bluetooth
+    // connection's memory: the TLS handshake does not fit beside it (seen as
+    // mbedtls -0x7F00). The remote reconnects when advertising returns.
+    vTaskDelay(pdMS_TO_TICKS(2500));
+    bleReleaseForTls();
     ossmStartUpdate();
     waitFor(CHECK_TIMEOUT_MS, [] {
         return !networkStatus.targetVersion.isEmpty() ||
@@ -509,6 +519,7 @@ void remoteUpdateTask(void *) {
     }
     ESP_LOGW(TAG, "Update asked for by a remote ended: %s",
              remoteUpdatePhase == PHASE_UP_TO_DATE ? "up to date" : updateFailure().c_str());
+    bleResumeAfterTls();
     vTaskDelay(pdMS_TO_TICKS(REMOTE_RESULT_HOLD_MS));
     remoteUpdatePhase = PHASE_NONE;
     vTaskDelete(nullptr);

@@ -5,6 +5,9 @@
 #include <NimBLEServer.h>
 #include <esp_log.h>
 
+void bleReleaseForTls();
+void bleResumeAfterTls();
+
 #define SERVICE_UUID "522b443a-4f53-534d-0001-420badbabe69"
 
 // **********************************************************
