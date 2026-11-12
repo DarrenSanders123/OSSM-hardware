@@ -650,9 +650,11 @@ void fleetTask(void *) {
 // (prefixed FLEET?), one JSON line out (prefixed FLEET!).
 // ---------------------------------------------------------------------------
 void replySerial(const JsonDocument &reply) {
-    String line = "\nFLEET!";
-    serializeJson(reply, line);
-    line += "\n";
+    // serializeJson() replaces the String it writes to, so the marker has to
+    // be added around the result rather than before it.
+    String json;
+    serializeJson(reply, json);
+    const String line = "\nFLEET!" + json + "\n";
     Serial.write(reinterpret_cast<const uint8_t *>(line.c_str()), line.length());
     Serial.flush();
 }
