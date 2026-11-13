@@ -30,6 +30,8 @@
 #include "ossm/state/menu.h"
 #include "ossm/state/network.h"
 #include "ossm/state/state.h"
+#include <RadBle.h>
+
 #include "services/communication/nimble.h"
 #include "services/led.h"
 #include "services/wm.h"
@@ -234,6 +236,8 @@ bool inSession() {
            name.startsWith("strokeEngine") || name.startsWith("streaming");
 }
 
+String currentDeviceName();
+
 void buildStatus(JsonDocument &status) {
     status["t"] = "status";
     status["version"] = VERSION;
@@ -241,6 +245,7 @@ void buildStatus(JsonDocument &status) {
     status["track"] = FIRMWARE_TRACK;
     status["chip"] = ESP.getChipModel();
     status["state"] = stateName();
+    status["deviceName"] = currentDeviceName();
     status["uptimeSeconds"] =
         static_cast<uint32_t>(esp_timer_get_time() / 1000000LL);
     status["resetReason"] = resetReasonName(resetReason);
@@ -381,6 +386,47 @@ std::vector<Result> results;
 std::vector<Command> polled;
 uint32_t pollIntervalMs = FALLBACK_POLL_MS;
 volatile bool workerDone = false;
+
+// The name the machine shows over Bluetooth and uses on the Wi-Fi network.
+// Same rules and storage as the Bluetooth rename characteristic, so both ways
+// of renaming agree.
+String currentDeviceName() { return radble::loadDeviceName("OSSM"); }
+
+bool validDeviceName(const String &name) {
+    if (name.isEmpty() || name.length() > radble::DEVICE_NAME_MAX_BYTES) return false;
+    if (name[0] == ' ' || name[0] == '-' || name[0] == '.' || name[0] == '_') return false;
+    for (size_t index = 0; index < name.length(); index++) {
+        const char c = name[index];
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == ' ' || c == '-' ||
+                        c == '_' || c == '.';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+// A Wi-Fi host name allows letters, digits and dashes only.
+String hostnameFor(const String &name) {
+    String host;
+    for (size_t index = 0; index < name.length() && host.length() < 32; index++) {
+        const char c = name[index];
+        const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                           (c >= '0' && c <= '9');
+        host += alnum ? c : '-';
+    }
+    return host.isEmpty() ? String("ossm") : host;
+}
+
+bool saveDeviceName(String name) {
+    name.trim();
+    if (!validDeviceName(name) || !radble::persistDeviceName(name)) return false;
+    Preferences userConfig;
+    if (userConfig.begin("UserConfig", false)) {
+        userConfig.putString("DeviceName", name);
+        userConfig.end();
+    }
+    return true;
+}
 
 // "code: what went wrong", for the dashboard.
 String updateFailure() {
@@ -553,6 +599,17 @@ void execute(const Command &command) {
         // Always allowed: stopping is the safe direction.
         stateMachine->process_event(EmergencyStop{});
         report(command, true, "state: " + stateName());
+    } else if (command.type == "rename") {
+        if (inSession()) {
+            report(command, false, "machine is in use; try again when idle");
+        } else if (!saveDeviceName(command.text)) {
+            report(command, false, "that name is not allowed");
+        } else {
+            report(command, true, "renamed to " + command.text + "; restarting");
+            flushResults();
+            vTaskDelay(pdMS_TO_TICKS(800));
+            ESP.restart();
+        }
     } else if (command.type == "restart") {
         if (inSession() && !command.force) {
             report(command, false, "machine is in use; use force restart");
@@ -785,6 +842,7 @@ void handleSerial(const String &json) {
         reply["version"] = VERSION;
         reply["buildSha"] = FIRMWARE_BUILD_SHA;
         reply["ready"] = static_cast<bool>(fleetReady);
+        reply["deviceName"] = currentDeviceName();
         if (fleetReady) reply["secret"] = machineKey;
         JsonObject wifi = reply["wifi"].to<JsonObject>();
         wifi["connected"] = WiFi.status() == WL_CONNECTED;
@@ -808,6 +866,16 @@ void handleSerial(const String &json) {
         }
         WiFi.scanDelete();
         reply["ok"] = true;
+    } else if (op == "name") {
+        const String name = request["name"] | "";
+        const bool ok = saveDeviceName(name);
+        reply["ok"] = ok;
+        replySerial(reply);
+        if (ok) {
+            vTaskDelay(pdMS_TO_TICKS(800));
+            ESP.restart();
+        }
+        return;
     } else if (op == "wifi") {
         const String ssid = request["ssid"] | "";
         const String password = request["password"] | "";
@@ -842,6 +910,7 @@ void serialTask(void *) {
 
 void fleetEarlyInit() {
     evaluateLastReset();
+    WiFi.setHostname(hostnameFor(currentDeviceName()).c_str());
     ets_install_putc1(capturePutc);
     esp_log_set_vprintf(captureVprintf);
     xTaskCreatePinnedToCore(serialTask, "fleetSerial", 6144, nullptr, 1,
