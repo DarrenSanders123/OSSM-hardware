@@ -408,7 +408,23 @@ void setHomingActive(bool active) {
 
 bool isHomingActive() { return homingActiveFlag; }
 
+static volatile bool updateActiveFlag = false;
+
+void setUpdateActive(bool active) { updateActiveFlag = active; }
+
+bool isUpdateActive() { return updateActiveFlag; }
+
+void showUpdateFlashing() {
+    // Cyan, 250 ms on / 250 ms off. Cyan is used by nothing else.
+    const bool on = (millis() / 250) % 2 == 0;
+    setLEDColor(on ? CRGB(0, 255, 255) : CRGB::Black);
+}
+
 void updateLEDForMachineStatus() {
+    if (isUpdateActive()) {
+        showUpdateFlashing();
+        return;
+    }
     // Check if homing is active - this takes priority over BLE status
     if (isHomingActive()) {
         showHomingBreathing();

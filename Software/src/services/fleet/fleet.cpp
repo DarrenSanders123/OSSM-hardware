@@ -31,6 +31,7 @@
 #include "ossm/state/network.h"
 #include "ossm/state/state.h"
 #include "services/communication/nimble.h"
+#include "services/led.h"
 #include "services/wm.h"
 #include "utils/https_client.hpp"
 #include "utils/tls_session.hpp"
@@ -474,6 +475,7 @@ void updateFromError(const Command &command) {
     networkStatus.clearUpdate();
     if (millis() > HEAP_FRESH_MS) {
         vTaskDelay(pdMS_TO_TICKS(2500));  // the remote reads "update.checking"
+        setUpdateActive(true);
         ESP_LOGW(TAG, "Restarting first: the update needs unfragmented memory");
         updateAfterRestartMagic = UPDATE_AFTER_RESTART;
         vTaskDelay(pdMS_TO_TICKS(300));
@@ -568,6 +570,7 @@ void execute(const Command &command) {
             flushResults();
             // A connected remote reads this and shows "updating, do not restart".
             remoteUpdatePhase = PHASE_CHECKING;
+            setUpdateActive(true);
             vTaskDelay(pdMS_TO_TICKS(3500));
             updateAfterRestartMagic = UPDATE_AFTER_RESTART;
             ESP.restart();

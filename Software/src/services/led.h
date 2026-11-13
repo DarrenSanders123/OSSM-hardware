@@ -62,6 +62,11 @@ void showBLEDisconnected(); // Off
 void pulseForCommunication();  // Brief brightness increase for BLE communication
 
 // Machine status functions
+// Firmware update in progress: fast cyan flashing (no other status uses cyan),
+// so nobody restarts the machine halfway.
+void setUpdateActive(bool active);
+bool isUpdateActive();
+void showUpdateFlashing();
 void setHomingActive(bool active);
 bool isHomingActive();
 void updateLEDForMachineStatus();
