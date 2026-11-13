@@ -566,7 +566,9 @@ void execute(const Command &command) {
         } else if (millis() > HEAP_FRESH_MS) {
             report(command, true, "restarting first; the update runs right after");
             flushResults();
-            vTaskDelay(pdMS_TO_TICKS(500));
+            // A connected remote reads this and shows "updating, do not restart".
+            remoteUpdatePhase = PHASE_CHECKING;
+            vTaskDelay(pdMS_TO_TICKS(3500));
             updateAfterRestartMagic = UPDATE_AFTER_RESTART;
             ESP.restart();
         } else if (inMenu()) {
